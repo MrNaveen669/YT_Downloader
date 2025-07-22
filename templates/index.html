@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>KAytube Downloader</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-start p-6">
+  <h1 class="text-3xl font-bold mb-6">🎥 KAytube Downloader</h1>
+
+  <div class="w-full max-w-xl mb-8">
+    <input id="youtubeURL" type="text" placeholder="Paste YouTube URL here..." class="w-full px-4 py-3 text-black rounded" />
+    <div class="flex items-center gap-4 mt-4">
+      <button onclick="fetchFormats()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Get Available Formats</button>
+      <label class="inline-flex items-center gap-2">
+        <input type="checkbox" id="audioOnlyToggle" class="form-checkbox text-blue-500" />
+        <span class="text-sm">Audio Only (Playlists)</span>
+      </label>
+    </div>
+  </div>
+
+  <div id="fetchProgressContainer" class="w-full max-w-xl mb-4 hidden">
+    <h2 class="text-lg mb-2">Fetching List</h2>
+    <div class="w-full bg-gray-700 rounded">
+      <div id="fetchProgressBar" class="bg-yellow-500 text-xs leading-none py-1 text-center text-white rounded" style="width: 0%;">0%</div>
+    </div>
+  </div>
+
+  <div id="filtersSection" class="w-full max-w-xl mb-4 hidden">
+    <div class="flex gap-4 mb-4">
+      <button onclick="filterFormats('video')" class="bg-gray-700 px-4 py-2 rounded">Video</button>
+      <button onclick="filterFormats('audio')" class="bg-gray-700 px-4 py-2 rounded">Audio</button>
+      <button onclick="filterFormats('all')" class="bg-gray-700 px-4 py-2 rounded">All</button>
+    </div>
+  </div>
+
+  <div id="formatsSection" class="w-full max-w-xl hidden">
+    <h2 class="text-xl font-semibold mb-2">Choose Format:</h2>
+    <div id="formatOptions" class="flex flex-col gap-2"></div>
+    <button id="downloadBtn" onclick="startDownload()" class="mt-4 bg-green-600 hover:bg-green-700 px-4 py-2 rounded">Download</button>
+  </div>
+
+  <div id="progressContainer" class="w-full max-w-xl mt-6 hidden">
+    <h2 class="text-lg mb-2">Download Progress</h2>
+    <div class="w-full bg-gray-700 rounded">
+      <div id="progressBar" class="bg-green-500 text-xs leading-none py-1 text-center text-white rounded" style="width: 0%;">0%</div>
+    </div>
+    <div id="downloadStatus" class="mt-2 text-sm text-gray-300"></div>
+  </div>
+
+  <script>
+    let selectedFormat = null;
+    let title = "";
+    let finalURL = "";
+    let allFormats = [];
+
+    async function fetchFormats() {
+      const url = document.getElementById("youtubeURL").value.trim();
+      const audioOnly = document.getElementById("audioOnlyToggle").checked;
+      const fetchProgress = document.getElementById("fetchProgressContainer");
+      const fetchBar = document.getElementById("fetchProgressBar");
+      const section = document.getElementById("formatsSection");
+      const filters = document.getElementById("filtersSection");
+      const container = document.getElementById("formatOptions");
+
+      if (!url) return alert("Please enter a YouTube URL.");
+
+      section.classList.add("hidden");
+      filters.classList.add("hidden");
+      fetchProgress.classList.remove("hidden");
+      fetchBar.style.width = "10%";
+      fetchBar.textContent = "10%";
+
+      try {
+        const res = await fetch("/api/formats", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, audioOnly }),
+        });
+
+        fetchBar.style.width = "50%";
+        fetchBar.textContent = "50%";
+
+        const text = await res.text();
+        const data = JSON.parse(text);
+
+        if (!res.ok) throw new Error(data.error || "Failed");
+
+        if (data.error && data.error.includes("Playlist")) {
+          fetchBar.style.width = "100%";
+          fetchBar.textContent = "Preparing ZIP...";
+          downloadFile(`/stream-download?url=${encodeURIComponent(url)}&audioOnly=${audioOnly}`, null);
+          return;
+        }
+
+        allFormats = data.formats;
+        title = data.title;
+        finalURL = url;
+        displayFormats(allFormats);
+        section.classList.remove("hidden");
+        filters.classList.remove("hidden");
+
+        fetchBar.style.width = "100%";
+        fetchBar.textContent = "Ready";
+        setTimeout(() => fetchProgress.classList.add("hidden"), 1000);
+      } catch (err) {
+        fetchBar.style.width = "100%";
+        fetchBar.textContent = "Failed";
+        alert("Error: " + err.message);
+      }
+    }
+
+    function displayFormats(formats) {
+      const container = document.getElementById("formatOptions");
+      container.innerHTML = "";
+      formats.forEach((fmt) => {
+        const div = document.createElement("div");
+        div.className = "format-option cursor-pointer border border-gray-600 rounded px-4 py-2 hover:bg-gray-700 transition";
+        div.textContent = `${fmt.format_id} | ${fmt.ext} | ${fmt.resolution || fmt.abr} | ${fmt.filesize || "?"} MB`;
+        div.onclick = () => {
+          document.querySelectorAll(".format-option").forEach(el => el.classList.remove("bg-green-600", "border-green-400"));
+          div.classList.add("bg-green-600", "border-green-400");
+          selectedFormat = fmt.format_id;
+        };
+        container.appendChild(div);
+      });
+    }
+
+    function filterFormats(type) {
+      if (type === "video") displayFormats(allFormats.filter(f => f.ext === "mp4"));
+      else if (type === "audio") displayFormats(allFormats.filter(f => f.ext === "m4a"));
+      else displayFormats(allFormats);
+    }
+
+    function startDownload() {
+      if (!selectedFormat) return alert("Please select a format.");
+      
+      // Let the backend handle filename generation - just pass the title
+      const downloadUrl = `/stream-download?format=${selectedFormat}&url=${encodeURIComponent(finalURL)}&title=${encodeURIComponent(title)}`;
+      
+      downloadFile(downloadUrl, null); // null filename means use server-provided name
+    }
+
+    function downloadFile(url, filename) {
+      const progressContainer = document.getElementById("progressContainer");
+      const progressBar = document.getElementById("progressBar");
+      const statusDiv = document.getElementById("downloadStatus");
+      
+      progressContainer.classList.remove("hidden");
+      progressBar.style.width = "0%";
+      progressBar.textContent = "0%";
+      statusDiv.textContent = "Initializing download...";
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.responseType = "blob";
+
+      xhr.onprogress = function (e) {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          progressBar.style.width = percent + "%";
+          progressBar.textContent = percent + "%";
+          
+          const loaded = (e.loaded / 1024 / 1024).toFixed(2);
+          const total = (e.total / 1024 / 1024).toFixed(2);
+          statusDiv.textContent = `Downloaded: ${loaded} MB / ${total} MB`;
+        } else {
+          statusDiv.textContent = "Downloading... (size unknown)";
+        }
+      };
+
+      xhr.onload = function () {
+        if (xhr.status === 200) {
+          try {
+            const blob = xhr.response;
+            const a = document.createElement("a");
+            const objectUrl = window.URL.createObjectURL(blob);
+            
+            a.href = objectUrl;
+            
+            // Use server-provided filename or fallback
+            if (filename) {
+              a.download = filename;
+            } else {
+              // Extract filename from Content-Disposition header if available
+              const contentDisposition = xhr.getResponseHeader('Content-Disposition');
+              if (contentDisposition) {
+                const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                if (filenameMatch && filenameMatch[1]) {
+                  a.download = filenameMatch[1].replace(/['"]/g, '');
+                } else {
+                  a.download = 'download';
+                }
+              } else {
+                a.download = 'download';
+              }
+            }
+            
+            a.style.display = "none";
+            
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            // Clean up the object URL after a short delay
+            setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
+            
+            progressBar.style.width = "100%";
+            progressBar.textContent = "Complete!";
+            statusDiv.textContent = "Download completed successfully";
+          } catch (error) {
+            console.error("Download error:", error);
+            alert("Error processing download: " + error.message);
+            statusDiv.textContent = "Download failed";
+          }
+        } else {
+          console.error("Download failed with status:", xhr.status);
+          alert(`Download failed with status: ${xhr.status}`);
+          statusDiv.textContent = "Download failed";
+        }
+      };
+
+      xhr.onerror = function() {
+        console.error("Network error during download");
+        alert("Network error occurred during download.");
+        statusDiv.textContent = "Network error";
+      };
+
+      xhr.ontimeout = function() {
+        console.error("Download timeout");
+        alert("Download timed out. Please try again.");
+        statusDiv.textContent = "Download timed out";
+      };
+
+      // Set a reasonable timeout (5 minutes)
+      xhr.timeout = 300000;
+
+      try {
+        xhr.send();
+      } catch (error) {
+        console.error("Error starting download:", error);
+        alert("Error starting download: " + error.message);
+      }
+    }
+
+    function sanitizeFilename(filename) {
+      // Remove or replace invalid filename characters
+      return filename.replace(/[<>:"/\\|?*]/g, '_').substring(0, 200);
+    }
+
+    function getFileExtension(formatId) {
+      // Map common format IDs to file extensions
+      const audioFormats = ['140', '141', '171', '249', '250', '251'];
+      if (audioFormats.includes(formatId)) {
+        return 'mp3';
+      }
+      return 'mp4';
+    }
+  </script>
+</body>
+</html>

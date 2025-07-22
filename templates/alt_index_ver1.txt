@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KAytube Downloader</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-start p-6">
+  <h1 class="text-3xl font-bold mb-6">🎥 KAytube Downloader</h1>
+
+  <div class="w-full max-w-xl mb-8">
+    <input id="youtubeURL" type="text" placeholder="Paste YouTube URL here..." class="w-full px-4 py-3 text-black rounded" />
+    <button onclick="fetchFormats()" class="mt-4 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">Get Available Formats</button>
+  </div>
+
+  <div id="formatsSection" class="w-full max-w-xl hidden">
+    <h2 class="text-xl font-semibold mb-2">Choose Format:</h2>
+    <select id="formatSelect" class="w-full px-4 py-2 text-black rounded mb-4"></select>
+    <a id="downloadBtn" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded inline-block" download>Download</a>
+  </div>
+
+  <script>
+    async function fetchFormats() {
+      const url = document.getElementById("youtubeURL").value.trim();
+      const select = document.getElementById("formatSelect");
+      const section = document.getElementById("formatsSection");
+      const downloadBtn = document.getElementById("downloadBtn");
+
+      if (!url) {
+        alert("Please enter a YouTube URL.");
+        return;
+      }
+
+      section.classList.add("hidden");
+      select.innerHTML = "<option disabled selected>Loading formats...</option>";
+
+      try {
+        const response = await fetch("/api/formats", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url })
+        });
+
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          throw new Error("Server response not valid JSON: " + text.slice(0, 100));
+        }
+
+        if (!response.ok) throw new Error(data.error || "Unknown error");
+
+        select.innerHTML = "";
+        data.formats.forEach(fmt => {
+          const display = `${fmt.format_id} | ${fmt.ext} | ${fmt.resolution || fmt.abr} | ${fmt.filesize || '?'} MB`;
+          const option = document.createElement("option");
+          option.value = fmt.format_id;
+          option.textContent = display;
+          select.appendChild(option);
+        });
+
+        section.classList.remove("hidden");
+
+        downloadBtn.onclick = () => {
+          const formatId = select.value;
+          const title = encodeURIComponent(data.title);
+          const encodedURL = encodeURIComponent(url);
+          downloadBtn.href = `/stream-download?format=${formatId}&url=${encodedURL}&title=${title}`;
+        };
+
+      } catch (err) {
+        alert("Error: " + err.message);
+      }
+    }
+  </script>
+</body>
+</html>
